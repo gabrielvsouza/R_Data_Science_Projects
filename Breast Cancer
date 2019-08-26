@@ -1,0 +1,243 @@
+#This script uses the "Breast Cancer Wisconsin (Diagnostic) Data Set" to predict cancer diagnosis based on cell features.
+
+#Breast Cancer Wisconsin (Diagnostic) Data Set
+#Data Folder:  https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/
+
+#Data Set Information: From: https://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+(Diagnostic)
+
+
+#This database is also available through the UW CS ftp server: 
+#  ftp ftp.cs.wisc.edu 
+#cd math-prog/cpo-dataset/machine-learn/WDBC/
+#Attribute                     Domain
+#-- -----------------------------------------
+# 1. Sample code number            id number
+#2. Clump Thickness               1 - 10
+#3. Uniformity of Cell Size       1 - 10
+#4. Uniformity of Cell Shape      1 - 10
+#5. Marginal Adhesion             1 - 10
+#6. Single Epithelial Cell Size   1 - 10
+#7. Bare Nuclei                   1 - 10
+#8. Bland Chromatin               1 - 10
+#9. Normal Nucleoli               1 - 10
+#10. Mitoses                      1 - 10
+#11. Class:                      (2 for benign, 4 for malignant)
+
+#8. Missing attribute values: 16
+
+#There are 16 instances in Groups 1 to 6 that contain a single missing 
+#(i.e., unavailable) attribute value, now denoted by "?".  
+
+
+#Load the libraries
+
+library(ggplot2)
+library(corrgram)
+library(car)
+library(lattice)
+library(ROCR)
+library(plotly)
+library(tree)
+library(gridExtra)
+library(devtools)
+library(tidyverse)
+library(downloader)
+library(BiocGenerics)
+library(corrplot)
+library(PerformanceAnalytics)
+library(psych)
+library(GGally)
+
+
+# Read the Data
+
+# url Breast Cancer data from Wisconsin
+
+url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/breast-cancer-wisconsin.data"
+
+
+# Read the data
+data <- read.csv(url)
+head(data)
+
+#Rewrite the columns
+data <- read.csv(file = url, header = FALSE,
+                 col.names = c("id","CT", "UCSize", "UCShape", "MA", "SECS", "BN", "BC", "NN","M", "diagnosis") )
+
+
+#Adjust the data set
+library(dplyr)
+library(tidyverse)
+data2 <- data %>% select(-id, -BN)
+
+data2$outcome[data2$diagnosis==4] = 1
+data2$outcome[data2$diagnosis==2] = 0
+data2$outcome = as.integer(data2$outcome)
+head(data2)
+
+#Need to split the dataset into the training sample and the testing sample
+sample_size = floor(0.5 * nrow(data2))
+
+# set the seed to make your partition reproductible
+set.seed(1729)
+train_set = sample(seq_len(nrow(data2)), size = sample_size)
+
+training = data2[train_set, ]
+
+testing = data2[-train_set, ]
+
+head(training)
+head(testing)
+
+# Fit the model using glm Generalize Linear Model
+# Model Fitting
+# Start off with this (alpha = 0.05)
+model_algorithm = model = glm(outcome ~ CT + 
+                                UCSize +
+                                UCShape +
+                                MA +
+                                SECS + 
+                                BC	+
+                                NN	+
+                                M ,
+                              family=binomial(link='logit'), control = list(maxit = 50),data=training)
+
+print(summary(model_algorithm))
+
+print(anova(model_algorithm, test="Chisq"))
+
+# Using Uniform Cell size and Uniform Cell Shape as predictors of diagnosis
+# Settled Uniform Cell Size and Uniform Cell Shape
+model_algorithm_final = model = glm(outcome ~ UCSize + UCShape ,
+                                    family=binomial(link='logit'), control = list(maxit = 50),data=training)
+
+print(summary(model_algorithm_final))
+
+model_algorithm_final = model = glm(outcome ~ UCSize + UCShape + MA ,
+                                    family=binomial(link='logit'), control = list(maxit = 50),data=training)
+
+print(summary(model_algorithm_final))
+
+
+#Apply the algorith to the training sample
+prediction_training = predict(model_algorithm_final,training, type = "response")
+prediction_training = ifelse(prediction_training > 0.5, 1, 0)
+error = mean(prediction_training != training$outcome)
+print(paste('Model Accuracy',1-error))
+
+# Get the ROC curve and the AUC
+p = predict(model_algorithm_final, training, type="response")
+pr = prediction(p, training$outcome)
+prf = performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+
+auc = performance(pr, measure = "auc")
+auc = auc@y.values[[1]]
+print(paste("Model Accuracy", auc))
+
+
+# Apply the algorithm to the testing sample
+prediction_testing = predict(model_algorithm_final,testing, type = "response")
+prediction_testing = ifelse(prediction_testing > 0.5, 1, 0)
+error = mean(prediction_testing != testing$outcome)
+print(paste('Model Accuracy',1-error))
+
+# Get the ROC curve and the AUC
+p = predict(model_algorithm_final, testing, type="response")
+pr = prediction(p, testing$outcome)
+prf = performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+
+auc = performance(pr, measure = "auc")
+auc = auc@y.values[[1]]
+print(paste("Model Accuracy", auc))
+
+
+# Apply the algorithm to the entire dataset
+prediction_data = predict(model_algorithm_final,data, type = "response")
+prediction_data = ifelse(prediction_data > 0.5, 1, 0)
+error = mean(prediction_data != data$outcome)
+print(paste('Model Accuracy',1-error))
+
+# Get the ROC curve and the AUC
+p = predict(model_algorithm_final, data, type="response")
+pr = prediction(p, data$outcome)
+prf = performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+
+
+auc = performance(pr, measure = "auc")
+auc = auc@y.values[[1]]
+print(paste("Model Accuracy", auc))
+
+
+#Create a Decision Tree
+# Droping the outcome variable which was used for the logistic model
+
+training$outcome = NULL
+testing$outcome = NULL
+
+training$diagnosis[training$diagnosis == 4] = 1
+training$diagnosis[training$diagnosis ==2] = 0
+
+
+# Running the first tree 
+model_tree = tree(diagnosis ~ UCSize + 
+                    UCShape +
+                    MA +
+                    SECS +
+                    BC	+ 
+                    NN	+
+                    M,
+                  data = training)
+
+summary(model_tree)
+
+# Plot the results
+plot(model_tree, type = "uniform")
+# Add some text to the plot
+text(model_tree, pretty = 0, cex=0.8)
+
+# Check the tree on the training data
+# Distributional prediction
+
+model_tree_pred_train = predict(model_tree, training) # gives the probability for each class
+
+model_tree_pred_test = predict(model_tree, testing) # gives the probability for each class
+
+# Try to prune the tree to avoid over fitting
+cv.tree(model_tree)
+plot(cv.tree(model_tree)) # Seems like a tree of size 5 might be best
+
+# Pruned model
+model_tree_prune = prune.tree(model_tree, best = 5)
+summary(model_tree_prune)
+
+# Now we want to plot our results
+plot(model_tree_prune, type = "uniform")
+
+# Add some text to the plot
+text(model_tree, pretty = 0, cex=0.8)
+
+#Explore PCA's
+all_pca <- prcomp(data2[,1:8], cor=TRUE, scale = TRUE)
+summary(all_pca)
+
+library(factoextra)
+fviz_eig(all_pca, addlabels=TRUE, ylim=c(0,60), geom = c("bar", "line"), barfill = "pink",  
+         barcolor="blue",linecolor = "red", ncp=10)+
+  labs(title = "Cancer All Variances - PCA",
+       x = "Principal Components", y = "% of variances")
+
+
+p1 <- fviz_contrib(all_pca, choice="var", axes=1, fill="pink", color="grey", top=10)
+p2 <- fviz_contrib(all_pca, choice="var", axes=2, fill="skyblue", color="grey", top=10)
+grid.arrange(p1,p2,ncol=2)
+
+data2$outcome[data$diagnosis==4] = 'M'
+data2$outcome[data$diagnosis==2] = 'B'
+
+
+fviz_pca_biplot(all_pca, col.ind = data2$outcome, col="black",
+                palette = "jco", geom = "point", repel=TRUE,
+                legend.title="Diagnosis", addEllipses = TRUE)
